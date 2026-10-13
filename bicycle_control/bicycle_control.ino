@@ -1,5 +1,11 @@
 // Bicycle Control - ESP32 WiFi Access Point + Web Control Panel
-// Board: ESP32 (classic, has real DAC on GPIO25 / GPIO26)
+// Board: ESP32-C6 (Pico-H). C6 me DAC nahi hota, isliye PWM + RC filter se analog voltage banta hai.
+// Arduino-ESP32 core 3.x chahiye.
+//   Wiring: GPIO4 --[4.7k]--+-- analog out (0-3V)
+//                           |
+//                         [1uF]
+//                           |
+//                          GND
 //
 // WiFi name : "bicycle control"  (open network, no password)
 // Page      : http://192.168.4.1  (phone connect hote hi captive portal se khud khul jayega)
@@ -18,8 +24,10 @@
 #include <DNSServer.h>
 
 const char* AP_SSID = "bicycle control";   // open network
-const int   DAC_PIN = 25;                  // analog output pin (GPIO25 = DAC1, GPIO26 = DAC2)
-const float VREF    = 3.3;                 // ESP32 DAC full scale
+const int   PWM_PIN = 4;                   // PWM output pin (RC filter lagao)
+const float VREF    = 3.3;                 // full scale
+const int   PWM_RES = 10;                  // 10-bit (0-1023)
+const int   PWM_FREQ = 20000;              // 20 kHz
 
 WebServer server(80);
 DNSServer dns;
@@ -32,7 +40,7 @@ void setVoltage(float v) {
   if (v < 0) v = 0;
   if (v > 3.0) v = 3.0;
   volts = v;
-  dacWrite(DAC_PIN, (uint8_t)(v / VREF * 255.0 + 0.5));
+  ledcWrite(PWM_PIN, (uint32_t)(v / VREF * ((1 << PWM_RES) - 1) + 0.5));
 }
 
 const char PAGE[] PROGMEM = R"rawliteral(
@@ -109,6 +117,7 @@ void handleNotFound() {
 
 void setup() {
   Serial.begin(115200);
+  ledcAttach(PWM_PIN, PWM_FREQ, PWM_RES);
   setVoltage(0);
 
   WiFi.mode(WIFI_AP);
