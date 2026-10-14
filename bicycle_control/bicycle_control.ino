@@ -1,13 +1,15 @@
 // Bicycle Control - ESP32-C6 WiFi Access Point + Web Control Panel
-// E-bike controller ko 0..3.4V throttle signal dene ke liye.
+// E-bike controller ko throttle signal dene ke liye.
 // Arduino-ESP32 core 3.x, board "ESP32C6 Dev Module".
 //
 // WiFi : "bicycle control" (WPA2, password AP_PASS)
 // Page : http://192.168.4.1 (connect karte hi khud khulta hai)
 //
-// Buttons: START = console + TB6612 on | STOP = throttle 0 + driver standby
-//          MOVE = 1V | Slider = 0 .. THROTTLE_MAX volt
-// Safety : heartbeat 1s band -> throttle 0 | throttle ramp | boot par STBY LOW
+// Buttons: START      = console + TB6612 on
+//          STOP       = cycle band, throttle 0, driver standby
+//          CALL CYCLE = dabate hi throttle CALL_VOLTAGE (1.8V) par chala deta hai
+//                       (cycle chalne ki threshold). Dobara dabane par ruk jata hai.
+// Safety : page ka status-poll 1s band -> throttle 0 | throttle ramp | boot par STBY LOW
 //
 // Output chain: GPIO0 PWM -> TB6612 PWMA -> AO1 (VM ka PWM)
 //               -> inductor 100-220uH -> 220uF + 100nF -> throttle signal wire
@@ -17,7 +19,7 @@
 //   TB6612 VM   -> 5V supply (+)          TB6612 VCC  -> ESP32 3V3
 //   TB6612 GND  -> ESP32 GND + supply (-) + controller GND (common)
 //   TB6612 PWMA -> GPIO0                  TB6612 AIN1 -> GPIO1 (HIGH)
-//   TB6612 AIN2 -> GPIO2 (LOW)            TB6612 STBY -> GPIO3 + 10k to GND
+//   TB6612 AIN2 -> GPIO2 (LOW)            TB6612 STBY -> GPIO3 (+ 10k to GND, optional)
 //   TB6612 AO1  -> inductor -> signal wire (cap 220uF+100nF to GND)
 //   TB6612 AO2  -> khali
 //
@@ -34,11 +36,12 @@ const char* AP_PASS = "bicycle123";        // kam se kam 8 character, badal lena
 const int PIN_PWMA = 0;   // PWM -> PWMA
 const int PIN_AIN1 = 1;   // HIGH
 const int PIN_AIN2 = 2;   // LOW
-const int PIN_STBY = 3;   // HIGH = driver on (10k pull-down laga ke rakho)
+const int PIN_STBY = 3;   // HIGH = driver on
 
-const float VM            = 5.0;   // TB6612 VM supply (volt)
-const float THROTTLE_MAX  = 3.4;   // controller ka max throttle voltage
-const float RAMP_V_PER_SEC = 1.5;  // throttle kitni tezi se badhe
+const float VM             = 5.0;   // TB6612 VM supply (volt)
+const float THROTTLE_MAX   = 3.4;   // controller ka max throttle voltage
+const float CALL_VOLTAGE   = 1.8;   // CALL CYCLE dabane par ye voltage (cycle chalne ki threshold)
+const float RAMP_V_PER_SEC = 1.5;   // throttle kitni tezi se badhe
 const unsigned long DEADMAN_MS = 1000;
 
 const int PWM_RES  = 10;
@@ -49,8 +52,8 @@ DNSServer dns;
 const IPAddress apIP(192, 168, 4, 1);
 
 bool  systemOn = false;
-float target   = 0.0;   // slider se mila voltage
-float current  = 0.0;   // abhi actual output
+bool  calling  = false;  // CALL CYCLE chalu hai?
+float current  = 0.0;    // abhi actual output voltage
 unsigned long lastBeat = 0, lastTick = 0;
 
 void writeVoltage(float v) {
@@ -60,62 +63,72 @@ void writeVoltage(float v) {
   ledcWrite(PIN_PWMA, (uint32_t)(v / VM * ((1 << PWM_RES) - 1) + 0.5));
 }
 
-void allOff() {
-  target = 0;
-  writeVoltage(0);
-}
-
-const char PAGE[] PROGMEM = R"rawliteral(
-<!DOCTYPE html><html><head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+const char PAGE_HEAD[] PROGMEM = R"rawliteral(<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <title>Bicycle Control</title>
 <style>
- body{font-family:sans-serif;background:#111;color:#eee;text-align:center;margin:0;padding:20px}
- button{font-size:20px;padding:14px 28px;margin:8px;border:0;border-radius:10px;color:#fff}
- #start{background:#2e9e4f} #stop{background:#c0392b} #move{background:#2471a3;width:80%}
- #console{margin-top:20px;padding:16px;border-radius:12px;background:#222;opacity:.35;pointer-events:none}
- #console.on{opacity:1;pointer-events:auto}
- input[type=range]{width:90%;height:40px}
-</style></head><body>
-<h1>Bicycle Control</h1>
-<div>Status: <b id="state">OFF</b></div>
-<button id="start" onclick="cmd('/start')">START</button>
-<button id="stop"  onclick="cmd('/stop')">STOP</button>
-<div id="console">
-  <button id="move" onclick="setV(1.0)">MOVE (1V)</button>
-  <p>Throttle: <span id="v">0.00</span> V</p>
-  <input id="sl" type="range" min="0" max="__MAX__" step="0.05" value="0" oninput="setV(this.value)">
-</div>
+:root{--bg:#0d1117;--card:#161b22;--line:#262d38;--txt:#e6edf3;--mut:#8b949e;--g:#2ea043;--r:#da3633;--b:#1f6feb;--y:#d29922}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#16202e,#0d1117 60%);color:var(--txt);font-family:system-ui,sans-serif;display:flex;justify-content:center}
+.app{width:100%;max-width:420px;padding:20px 16px}
+h1{font-size:22px;text-align:center;margin:8px 0 2px}
+.sub{text-align:center;color:var(--mut);font-size:13px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;text-align:center}
+.pill{display:inline-block;padding:5px 14px;border-radius:99px;font-size:13px;font-weight:600;background:#30363d}
+.pill.ready{background:#9e6a03}.pill.run{background:var(--g)}
+.gauge{--p:0;width:200px;height:200px;margin:16px auto;border-radius:50%;background:conic-gradient(var(--b) calc(var(--p)*1%),#232a35 0);display:flex;align-items:center;justify-content:center}
+.gauge.run{background:conic-gradient(var(--g) calc(var(--p)*1%),#232a35 0)}
+.gauge div{width:156px;height:156px;border-radius:50%;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge b{font-size:38px}.gauge span{color:var(--mut);font-size:13px}
+.row{display:flex;gap:10px}
+button{flex:1;border:0;border-radius:14px;padding:16px;font-size:17px;font-weight:700;color:#fff;cursor:pointer}
+button:active{transform:scale(.97)}
+#start{background:var(--g)}#stop{background:var(--r)}
+#call{width:100%;margin-top:12px;padding:22px;font-size:20px;background:var(--b)}
+#call.run{background:var(--y);color:#111}
+button:disabled{opacity:.35;pointer-events:none}
+#warn{display:none;background:#5a1d1d;color:#ffb4b4;text-align:center;border-radius:10px;padding:8px;font-size:13px;margin-bottom:12px}
+</style></head><body><div class="app">
+<h1>Bicycle Control</h1><div class="sub">WiFi: bicycle control</div>
+<div id="warn">Connection lost</div>
+<div class="card">
+<span class="pill" id="pill">OFF</span>
+<div class="gauge" id="g"><div><b id="v">0.0</b><span>volt</span></div></div>
+<div class="row"><button id="start" onclick="api('/start')">START</button><button id="stop" onclick="api('/stop')">STOP</button></div>
+<button id="call" onclick="callCycle()">CALL CYCLE</button>
+</div></div>
 <script>
-var want=0, on=false;
-function ui(s){
-  on=s.on;
-  document.getElementById('state').textContent = s.on ? 'ON' : 'OFF';
-  document.getElementById('console').classList.toggle('on', s.on);
-  if(!s.on){want=0;document.getElementById('sl').value=0;}
-  document.getElementById('v').textContent = want.toFixed(2);
+var MAX=)rawliteral";
+const char PAGE_TAIL[] PROGMEM = R"rawliteral(,st={on:false,call:false,v:0},lost=0;
+function $(i){return document.getElementById(i)}
+function render(){
+ var p=$('pill'),g=$('g'),c=$('call');
+ p.className='pill'+(st.call?' run':(st.on?' ready':''));
+ p.textContent=st.call?'CYCLE RUNNING':(st.on?'READY':'OFF');
+ g.className='gauge'+(st.call?' run':'');
+ g.style.setProperty('--p',Math.min(100,st.v/MAX*100));
+ $('v').textContent=st.v.toFixed(1);
+ c.disabled=!st.on;
+ c.className=st.call?'run':'';
+ c.textContent=st.call?'STOP CYCLE':'CALL CYCLE';
+ $('warn').style.display=lost>3?'block':'none';
 }
-function cmd(u){ fetch(u).then(r=>r.json()).then(ui).catch(()=>{}); }
-function setV(x){
-  want=parseFloat(x);
-  document.getElementById('sl').value=want;
-  document.getElementById('v').textContent=want.toFixed(2);
-  cmd('/volt?v='+want);
-}
-// heartbeat: ye band hote hi ESP throttle 0 kar deta hai
-setInterval(()=>{ if(on) cmd('/volt?v='+want); else cmd('/status'); }, 300);
-cmd('/status');
-</script></body></html>
-)rawliteral";
+function api(u){fetch(u).then(function(r){return r.json()}).then(function(s){st=s;lost=0;render()}).catch(function(){lost++;render()})}
+function callCycle(){api('/call?on='+(st.call?0:1))}
+setInterval(function(){api('/status')},300);api('/status');
+</script></body></html>)rawliteral";
 
 void sendStatus() {
-  String j = String("{\"on\":") + (systemOn ? "true" : "false") + ",\"v\":" + String(current, 2) + "}";
+  String j = String("{\"on\":") + (systemOn ? "true" : "false") +
+             ",\"call\":" + (calling ? "true" : "false") +
+             ",\"v\":" + String(current, 2) + "}";
   server.send(200, "application/json", j);
 }
 
 void handleRoot() {
-  String p = FPSTR(PAGE);
-  p.replace("__MAX__", String(THROTTLE_MAX, 2));
+  String p = FPSTR(PAGE_HEAD);
+  p += String(THROTTLE_MAX, 2);
+  p += FPSTR(PAGE_TAIL);
   server.send(200, "text/html", p);
 }
 
@@ -128,19 +141,22 @@ void handleStart() {
 
 void handleStop() {
   systemOn = false;
-  allOff();
+  calling = false;
+  writeVoltage(0);
   digitalWrite(PIN_STBY, LOW);
   sendStatus();
 }
 
-void handleVolt() {
-  if (systemOn && server.hasArg("v")) {
-    float v = server.arg("v").toFloat();
-    if (v < 0) v = 0;
-    if (v > THROTTLE_MAX) v = THROTTLE_MAX;
-    target = v;
+void handleCall() {
+  if (systemOn && server.hasArg("on")) {
+    calling = server.arg("on") == "1";
     lastBeat = millis();
   }
+  sendStatus();
+}
+
+void handleStatus() {
+  if (systemOn) lastBeat = millis();   // page ka poll = heartbeat
   sendStatus();
 }
 
@@ -156,7 +172,7 @@ void setup() {
   pinMode(PIN_AIN1, OUTPUT); digitalWrite(PIN_AIN1, HIGH);
   pinMode(PIN_AIN2, OUTPUT); digitalWrite(PIN_AIN2, LOW);
   ledcAttach(PIN_PWMA, PWM_FREQ, PWM_RES);
-  allOff();
+  writeVoltage(0);
 
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
@@ -169,8 +185,8 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/start", handleStart);
   server.on("/stop", handleStop);
-  server.on("/volt", handleVolt);
-  server.on("/status", sendStatus);
+  server.on("/call", handleCall);
+  server.on("/status", handleStatus);
   server.onNotFound(handleNotFound);
   server.begin();
   lastTick = millis();
@@ -185,8 +201,9 @@ void loop() {
   lastTick = now;
 
   if (systemOn) {
-    if (now - lastBeat > DEADMAN_MS) target = 0;   // phone/WiFi gaya -> throttle 0
+    if (now - lastBeat > DEADMAN_MS) calling = false;   // phone/WiFi gaya -> throttle 0
 
+    float target = calling ? CALL_VOLTAGE : 0.0;
     float step = RAMP_V_PER_SEC * dt;
     if (target > current)      writeVoltage(min(current + step, target));
     else if (target < current) writeVoltage(max(current - 4 * step, target));  // utarna tez

@@ -14,17 +14,19 @@ voltage set hota hai.
 
 PAGE KE BUTTONS
 ---------------
-  START  : console on, TB6612 driver chalu
-  STOP   : throttle 0V, TB6612 standby (soft shutdown, WiFi chalu rehta hai
-           taaki START dobara dabaya ja sake)
-  MOVE   : 1V throttle
-  Slider : 0V se 3.4V throttle (code me THROTTLE_MAX)
+  START      : console on, TB6612 driver chalu
+  STOP       : cycle band, throttle 0V, TB6612 standby (soft shutdown, WiFi
+               chalu rehta hai taaki START dobara dabaya ja sake)
+  CALL CYCLE : dabate hi throttle 1.8V (cycle chalne ki threshold,
+               code me CALL_VOLTAGE) par chala deta hai. Dobara dabane par
+               "STOP CYCLE" hokar cycle ruk jati hai. START ke baad hi chalta hai.
+  (Slider hata diya gaya hai.)
 
 SAFETY (CODE ME HAI)
 --------------------
   - WiFi WPA2 password wala hai.
-  - Deadman: page har 300ms heartbeat bhejta hai. 1 second tak na aaye
-    (phone gaya / WiFi chhuta) to throttle 0 ho jata hai.
+  - Deadman: page har 300ms status poll karta hai (wahi heartbeat). 1 second tak na aaye
+    (phone gaya / WiFi chhuta) to cycle band (throttle 0) ho jati hai.
   - Ramp: throttle 1.5V per second se badhta hai, utarta tez hai.
   - Boot par STBY LOW (10k pull-down) hai, driver band rehta hai.
   - Pehli baar test bike ko stand par, pahiya hawa me rakh kar karo.
