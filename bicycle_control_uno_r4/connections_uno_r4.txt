@@ -1,0 +1,47 @@
+BICYCLE CONTROL - ARDUINO UNO R4 WiFi CONNECTIONS
+=================================================
+
+Board : Arduino UNO R4 WiFi   (R4 Minima me WiFi nahi hota, ye code uspe nahi chalega)
+Core  : "Arduino UNO R4 Boards" (Boards Manager), library WiFiS3 saath aati hai
+WiFi  : "bicycle control", password bicycle123 (AP_PASS)
+Page  : http://192.168.4.1  (captive portal nahi, browser me khud address likho)
+
+Baaki sab (parts, TB6612 pinout, truth table, output filter, safety, test process)
+../bicycle_control/connections.txt jaisa hi hai.
+
+UNO R4 PIN WIRING
+-----------------
+  TB6612 pin   Kahan jodna hai
+  ----------   ---------------------------------------------------------
+  VM           5V supply (+)
+  VCC          UNO 5V pin   (R4 ka logic 5V hai)
+  GND (dono)   UNO GND + 5V supply (-) + controller GND  (sab COMMON)
+  PWMA         D9   (PWM, 20 kHz)
+  AIN1         D7   (code isse HIGH rakhta hai)
+  AIN2         D8   (code isse LOW rakhta hai)
+  STBY         D4  AUR 10k resistor se GND
+  AO1          Inductor ka ek sira
+  AO2          khali
+
+  AO1 --[Inductor 100-220uH]--+--> Controller ki THROTTLE SIGNAL wire
+                              |
+                      [220uF + 100nF]
+                              |
+                             GND (common)
+
+UNO R4 KITNA CURRENT DE SAKTA HAI
+---------------------------------
+  - Har I/O pin: lagbhag 8 mA (Arduino datasheet ke hisaab se; apne board ki
+    datasheet se confirm kar lena). Isse zyada kheenchne par pin kharab ho sakta hai.
+  - DAC (A0): sirf kuch mA, aur output range bhi poora 0-5V nahi hota.
+  - 5V pin: USB se power karne par USB ki limit tak (~500mA), VIN se power karne par
+    onboard regulator tak (garam hota hai). Throttle signal ke liye isse mat nikalo,
+    alag supply use karo.
+  - Matlab 300mA seedha R4 pin se possible nahi, isliye TB6612 + inductor chahiye.
+
+ESP32-C6 SE FARK
+----------------
+  - R4 ka logic 5V hai (ESP32 ka 3.3V), isliye TB6612 VCC = 5V.
+  - R4 par WebServer/DNSServer nahi hai, code me simple WiFiServer use hua hai.
+  - Captive portal nahi hai, 192.168.4.1 khud kholna padega.
+  - PWM ke liye PwmOut library (20 kHz), analogWrite default frequency kam hoti hai.
