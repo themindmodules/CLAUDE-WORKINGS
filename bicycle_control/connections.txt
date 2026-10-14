@@ -1,0 +1,135 @@
+BICYCLE CONTROL - CONNECTIONS AUR SARI DETAILS
+==============================================
+
+PROJECT KA MAKSAD
+-----------------
+E-bike (electric cycle) ke motor controller ko throttle (accelerator) ka
+signal dena. Controller ki throttle signal wire par 0 se ~3.4V chahiye.
+ESP32-C6 khud ka WiFi banata hai, phone se page khol kar slider se throttle
+voltage set hota hai.
+
+  WiFi name : bicycle control
+  Password  : bicycle123   (code me AP_PASS se badal sakte ho, min 8 character)
+  Page      : http://192.168.4.1  (connect karte hi khud khulta hai)
+
+PAGE KE BUTTONS
+---------------
+  START  : console on, TB6612 driver chalu
+  STOP   : throttle 0V, TB6612 standby (soft shutdown, WiFi chalu rehta hai
+           taaki START dobara dabaya ja sake)
+  MOVE   : 1V throttle
+  Slider : 0V se 3.4V throttle (code me THROTTLE_MAX)
+
+SAFETY (CODE ME HAI)
+--------------------
+  - WiFi WPA2 password wala hai.
+  - Deadman: page har 300ms heartbeat bhejta hai. 1 second tak na aaye
+    (phone gaya / WiFi chhuta) to throttle 0 ho jata hai.
+  - Ramp: throttle 1.5V per second se badhta hai, utarta tez hai.
+  - Boot par STBY LOW (10k pull-down) hai, driver band rehta hai.
+  - Pehli baar test bike ko stand par, pahiya hawa me rakh kar karo.
+
+PARTS
+-----
+  1 x ESP32-C6 Pico-H
+  1 x TB6612FNG motor driver module
+  1 x Inductor 100-220uH, kam se kam 1A rating
+  1 x Capacitor 220uF (10V ya zyada)
+  1 x Capacitor 100nF ceramic
+  1 x Resistor 10k (STBY pull-down)
+  1 x 5V supply, kam se kam 1A (USB power bank ya adapter)
+
+KYUN TB6612 + INDUCTOR
+----------------------
+ESP32-C6 me DAC nahi hai aur GPIO sirf 10-20mA deta hai. Throttle signal wire
+par 300mA tak current dikha (multimeter se), isliye PWM ko TB6612 se strong
+karte hain (AO1 par VM ke amplitude ka PWM) aur inductor + capacitor se
+smooth DC banate hain. Average voltage = duty x VM.  (VM = 5V, to 3.4V ke
+liye ~68% duty.)  Inductor spike current rokta hai, isliye uska hona zaroori hai.
+
+PINOUT - TB6612FNG MODULE
+-------------------------
+Zyada tar boards par:
+
+  Power side   : VM   VCC   GND
+  Motor A side : AO1  AO2
+  Motor B side : BO2  BO1
+  Control side : PWMA AIN2 AIN1 STBY BIN1 BIN2 PWMB GND
+
+(Pin naam apne board par likhe naam se match karo.)
+
+  VM    : output supply, 4.5V - 13.5V      (hum 5V dete hain)
+  VCC   : logic supply, 2.7V - 5.5V        (ESP32 3V3)
+  GND   : ground
+  PWMA  : channel A PWM input
+  AIN1, AIN2 : channel A direction (hum AIN1=HIGH, AIN2=LOW rakhte hain)
+  STBY  : LOW = driver band, HIGH = chalu
+  AO1, AO2 : channel A output
+  B channel (PWMB, BIN1, BIN2, BO1, BO2) use nahi hota
+
+TRUTH TABLE (channel A)
+  AIN1 AIN2 PWMA  -> Output
+   H    L   PWM   -> AO1 = VM ka PWM, AO2 = 0V     (hum yahi use karte hain)
+   H    L    L    -> dono output LOW (short brake)
+   L    H   PWM   -> AO2 = PWM, AO1 = 0V
+   L    L    H    -> output band
+   x    x    x  + STBY=L -> driver band
+
+WIRING TABLE
+------------
+  TB6612 pin      Kahan jodna hai
+  ------------    --------------------------------------------------------
+  VM              5V supply (+)
+  VCC             ESP32 3V3
+  GND (dono)      ESP32 GND + 5V supply (-) + controller GND  (sab COMMON)
+  PWMA            ESP32 GPIO0   (PWM, 20 kHz)
+  AIN1            ESP32 GPIO1   (code isse HIGH rakhta hai)
+  AIN2            ESP32 GPIO2   (code isse LOW rakhta hai)
+  STBY            ESP32 GPIO3  AUR 10k resistor se GND
+  AO1             Inductor ka ek sira
+  AO2             khali (kuch mat jodo)
+
+  GPIO4, 5, 8, 9, 15 boot ke special (strapping) pins hain, inhe use mat karo.
+  Agar aapke Pico-H par GPIO0-3 bahar nahi aate to code me PIN_* badlo.
+
+OUTPUT FILTER
+-------------
+  AO1 --[Inductor 100-220uH]--+--> Controller ki THROTTLE SIGNAL wire
+                              |
+                      [220uF + 100nF]  (dono parallel)
+                              |
+                             GND (common)
+
+  Electrolytic 220uF me stripe wali leg (-) GND ki taraf.
+
+CONTROLLER SE JODNA
+-------------------
+  - Original throttle ki signal wire controller se alag karo.
+  - Hamara output (inductor/capacitor wali jagah) controller ki signal wire
+    ke pin se jodo.
+  - Throttle ki 5V wire aur GND controller ki hi rehne do.
+  - GND common hona zaroori hai (ESP32, 5V supply, controller).
+  - Controller ka idle voltage measure kar lo. Agar ~0.8V hai to 0V dene par
+    throttle fault aa sakta hai; tab code me minimum voltage rakhna padega.
+
+TEST KA TARIKA (STEP BY STEP)
+-----------------------------
+  1. Sab connections karo, par controller se MAT jodo.
+  2. Arduino IDE: ESP32 core 3.x install, board "ESP32C6 Dev Module".
+  3. bicycle_control.ino upload karo.
+  4. Phone se WiFi "bicycle control" connect karo, START dabao.
+  5. Output ko multimeter ya 4.7 ohm 2W resistor par test karo.
+     Slider 3V par ~3V dikhna chahiye. Load me 0.1-0.2V kam ho sakta hai
+     (circuit open-loop hai).
+  6. Sab theek ho to controller ki signal wire se jodo.
+  7. Bike stand par, pahiya hawa me, pehli test.
+
+DHYAN RAKHNE WALI BAATEIN
+-------------------------
+  - VM 5V se zyada mat do, nahi to slider ka max 3.4V se upar ja sakta hai.
+  - Inductor kam se kam 1A rating ka ho, warna garam hoga.
+  - Output ko seedha GND ya 5V se short mat karo.
+  - Ye open-loop hai. Exact voltage chahiye to output ko ESP32 ADC se naap kar
+    feedback lagaya ja sakta hai.
+  - Signal wire par 300mA ki reading mili thi; agar wo asal me supply wire thi
+    to simple RC filter (1k + 10uF) bhi chal jata hai, inductor ki zaroorat nahi.

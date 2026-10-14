@@ -1,15 +1,27 @@
 // Bicycle Control - ESP32-C6 WiFi Access Point + Web Control Panel
-// Output: TB6612FNG PWM -> inductor + capacitor -> 0..3.4V throttle signal
+// E-bike controller ko 0..3.4V throttle signal dene ke liye.
 // Arduino-ESP32 core 3.x, board "ESP32C6 Dev Module".
-// Wiring ke liye README.md dekho.
 //
-// WiFi : "bicycle control" (WPA2, password neeche AP_PASS)
+// WiFi : "bicycle control" (WPA2, password AP_PASS)
 // Page : http://192.168.4.1 (connect karte hi khud khulta hai)
 //
-//   START : console on + TB6612 chalu        STOP : throttle 0 + TB6612 standby
-//   MOVE  : 1V                               Slider : 0 .. THROTTLE_MAX volt
-//   Safety: page ka heartbeat 1s band hua to throttle 0 ho jata hai
-//           throttle dheere (RAMP_V_PER_SEC) badhta hai
+// Buttons: START = console + TB6612 on | STOP = throttle 0 + driver standby
+//          MOVE = 1V | Slider = 0 .. THROTTLE_MAX volt
+// Safety : heartbeat 1s band -> throttle 0 | throttle ramp | boot par STBY LOW
+//
+// Output chain: GPIO0 PWM -> TB6612 PWMA -> AO1 (VM ka PWM)
+//               -> inductor 100-220uH -> 220uF + 100nF -> throttle signal wire
+//   Average voltage = duty x VM.
+//
+// Wiring (poori detail connections.txt me):
+//   TB6612 VM   -> 5V supply (+)          TB6612 VCC  -> ESP32 3V3
+//   TB6612 GND  -> ESP32 GND + supply (-) + controller GND (common)
+//   TB6612 PWMA -> GPIO0                  TB6612 AIN1 -> GPIO1 (HIGH)
+//   TB6612 AIN2 -> GPIO2 (LOW)            TB6612 STBY -> GPIO3 + 10k to GND
+//   TB6612 AO1  -> inductor -> signal wire (cap 220uF+100nF to GND)
+//   TB6612 AO2  -> khali
+//
+// Pehle bina controller ke multimeter/resistor par test karo.
 
 #include <WiFi.h>
 #include <WebServer.h>
