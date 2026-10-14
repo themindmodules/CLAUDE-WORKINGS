@@ -9,6 +9,8 @@
 //          STOP       = cycle band, throttle 0, driver standby
 //          CALL CYCLE = dabate hi throttle CALL_VOLTAGE (1.8V) par chala deta hai
 //                       (cycle chalne ki threshold). Dobara dabane par ruk jata hai.
+//          SPEED slider = 0% -> 1.8V (threshold), 100% -> THROTTLE_MAX (3.4V),
+//                       cycle chalte waqt live badalta hai
 // Safety : page ka status-poll 1s band -> throttle 0 | throttle ramp | boot par STBY LOW
 //
 // Output chain: GPIO0 PWM -> TB6612 PWMA -> AO1 (VM ka PWM)
@@ -53,6 +55,7 @@ const IPAddress apIP(192, 168, 4, 1);
 
 bool  systemOn = false;
 bool  calling  = false;  // CALL CYCLE chalu hai?
+int   speedPct = 0;      // speed slider: 0% = CALL_VOLTAGE (1.8V), 100% = THROTTLE_MAX
 float current  = 0.0;    // abhi actual output voltage
 unsigned long lastBeat = 0, lastTick = 0;
 
@@ -61,6 +64,13 @@ void writeVoltage(float v) {
   if (v > THROTTLE_MAX) v = THROTTLE_MAX;
   current = v;
   ledcWrite(PIN_PWMA, (uint32_t)(v / VM * ((1 << PWM_RES) - 1) + 0.5));
+}
+
+
+// cycle chal rahi ho to: 1.8V (speed 0%) se THROTTLE_MAX (speed 100%) ke beech
+float targetVolt() {
+  if (!calling) return 0.0;
+  return CALL_VOLTAGE + speedPct / 100.0 * (THROTTLE_MAX - CALL_VOLTAGE);
 }
 
 const char PAGE_HEAD[] PROGMEM = R"rawliteral(<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -87,6 +97,10 @@ button:active{transform:scale(.97)}
 #call{width:100%;margin-top:12px;padding:22px;font-size:20px;background:var(--b)}
 #call.run{background:var(--y);color:#111}
 button:disabled{opacity:.35;pointer-events:none}
+input[type=range]{width:100%;height:36px;accent-color:var(--b)}
+.lab{display:flex;justify-content:space-between;font-size:13px;color:var(--mut);margin:4px 0}
+.lab b{color:var(--txt);font-size:15px}
+.card+.card{margin-top:14px}
 #warn{display:none;background:#5a1d1d;color:#ffb4b4;text-align:center;border-radius:10px;padding:8px;font-size:13px;margin-bottom:12px}
 </style></head><body><div class="app">
 <h1>Bicycle Control</h1><div class="sub">WiFi: bicycle control</div>
@@ -96,10 +110,15 @@ button:disabled{opacity:.35;pointer-events:none}
 <div class="gauge" id="g"><div><b id="v">0.0</b><span>volt</span></div></div>
 <div class="row"><button id="start" onclick="api('/start')">START</button><button id="stop" onclick="api('/stop')">STOP</button></div>
 <button id="call" onclick="callCycle()">CALL CYCLE</button>
+</div>
+<div class="card">
+<div class="lab"><span>SPEED CONTROL</span><b id="sp">0% (1.80V)</b></div>
+<input id="sl" type="range" min="0" max="100" step="1" value="0" disabled oninput="setSpeed(this.value)" onpointerdown="drag=1" onpointerup="drag=0" onchange="drag=0;api('/speed?p='+this.value)">
+<div class="lab"><span id="lo">Start 1.8V</span><span id="hi">Max 3.4V</span></div>
 </div></div>
 <script>
 var MAX=)rawliteral";
-const char PAGE_TAIL[] PROGMEM = R"rawliteral(,st={on:false,call:false,v:0},lost=0;
+const char PAGE_TAIL[] PROGMEM = R"rawliteral(,st={on:false,call:false,v:0,sp:0,lo:1.8},lost=0,drag=0,last=0;
 function $(i){return document.getElementById(i)}
 function render(){
  var p=$('pill'),g=$('g'),c=$('call');
@@ -111,9 +130,16 @@ function render(){
  c.disabled=!st.on;
  c.className=st.call?'run':'';
  c.textContent=st.call?'STOP CYCLE':'CALL CYCLE';
+ var vv=st.lo+st.sp/100*(MAX-st.lo);
+ if(!drag)$('sl').value=st.sp;
+ $('sl').disabled=!st.on;
+ $('sp').textContent=st.sp+'% ('+vv.toFixed(2)+'V)';
+ $('lo').textContent='Start '+st.lo.toFixed(1)+'V';
+ $('hi').textContent='Max '+MAX.toFixed(1)+'V';
  $('warn').style.display=lost>3?'block':'none';
 }
 function api(u){fetch(u).then(function(r){return r.json()}).then(function(s){st=s;lost=0;render()}).catch(function(){lost++;render()})}
+function setSpeed(x){var n=Date.now();if(n-last>80){last=n;api('/speed?p='+x)}}
 function callCycle(){api('/call?on='+(st.call?0:1))}
 setInterval(function(){api('/status')},300);api('/status');
 </script></body></html>)rawliteral";
@@ -121,7 +147,9 @@ setInterval(function(){api('/status')},300);api('/status');
 void sendStatus() {
   String j = String("{\"on\":") + (systemOn ? "true" : "false") +
              ",\"call\":" + (calling ? "true" : "false") +
-             ",\"v\":" + String(current, 2) + "}";
+             ",\"v\":" + String(current, 2) +
+             ",\"sp\":" + String(speedPct) +
+             ",\"lo\":" + String(CALL_VOLTAGE, 2) + "}";
   server.send(200, "application/json", j);
 }
 
@@ -142,6 +170,7 @@ void handleStart() {
 void handleStop() {
   systemOn = false;
   calling = false;
+  speedPct = 0;
   writeVoltage(0);
   digitalWrite(PIN_STBY, LOW);
   sendStatus();
@@ -150,6 +179,15 @@ void handleStop() {
 void handleCall() {
   if (systemOn && server.hasArg("on")) {
     calling = server.arg("on") == "1";
+    if (!calling) speedPct = 0;
+    lastBeat = millis();
+  }
+  sendStatus();
+}
+
+void handleSpeed() {
+  if (systemOn && server.hasArg("p")) {
+    speedPct = constrain(server.arg("p").toInt(), 0, 100);
     lastBeat = millis();
   }
   sendStatus();
@@ -186,6 +224,7 @@ void setup() {
   server.on("/start", handleStart);
   server.on("/stop", handleStop);
   server.on("/call", handleCall);
+  server.on("/speed", handleSpeed);
   server.on("/status", handleStatus);
   server.onNotFound(handleNotFound);
   server.begin();
@@ -201,9 +240,9 @@ void loop() {
   lastTick = now;
 
   if (systemOn) {
-    if (now - lastBeat > DEADMAN_MS) calling = false;   // phone/WiFi gaya -> throttle 0
+    if (now - lastBeat > DEADMAN_MS) { calling = false; speedPct = 0; }   // phone/WiFi gaya -> throttle 0
 
-    float target = calling ? CALL_VOLTAGE : 0.0;
+    float target = targetVolt();
     float step = RAMP_V_PER_SEC * dt;
     if (target > current)      writeVoltage(min(current + step, target));
     else if (target < current) writeVoltage(max(current - 4 * step, target));  // utarna tez

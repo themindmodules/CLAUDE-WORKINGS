@@ -20,7 +20,10 @@ PAGE KE BUTTONS
   CALL CYCLE : dabate hi throttle 1.8V (cycle chalne ki threshold,
                code me CALL_VOLTAGE) par chala deta hai. Dobara dabane par
                "STOP CYCLE" hokar cycle ruk jati hai. START ke baad hi chalta hai.
-  (Slider hata diya gaya hai.)
+  SPEED slider (niche) : speed control centre. 0% = 1.8V (threshold, cycle
+               yahin se chalna shuru), 100% = 3.4V (max, THROTTLE_MAX).
+               Cycle chalte waqt slider se speed live badalti hai. CALL CYCLE
+               rokne ya STOP par slider 0% par wapas aa jata hai.
 
 SAFETY (CODE ME HAI)
 --------------------

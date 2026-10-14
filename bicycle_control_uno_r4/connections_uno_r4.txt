@@ -6,7 +6,9 @@ Core  : "Arduino UNO R4 Boards" (Boards Manager), library WiFiS3 saath aati hai
 WiFi  : "bicycle control", password bicycle123 (AP_PASS)
 Page  : http://192.168.4.1  (captive portal nahi, browser me khud address likho)
 
-Buttons: START, STOP, CALL CYCLE (1.8V par cycle chalu), slider nahi hai.
+Buttons: START, STOP, CALL CYCLE (1.8V par cycle chalu) + SPEED slider (0% = 1.8V, 100% = 3.4V).
+
+Buttons: START, STOP, CALL CYCLE (1.8V par cycle chalu) + SPEED slider (0% = 1.8V, 100% = 3.4V).
 
 Baaki sab (parts, TB6612 pinout, truth table, output filter, safety, test process)
 ../bicycle_control/connections.txt jaisa hi hai.
