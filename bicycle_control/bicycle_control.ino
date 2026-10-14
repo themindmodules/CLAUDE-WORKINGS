@@ -9,6 +9,7 @@
 //          STOP       = cycle band, throttle 0, driver standby
 //          CALL CYCLE = dabate hi throttle CALL_VOLTAGE (1.8V) par chala deta hai
 //                       (cycle chalne ki threshold). Dobara dabane par ruk jata hai.
+//          HOLD TO RUN = jab tak dabaye rakho tab tak CALL_VOLTAGE (1.8V) par chalegi, chhodte hi ruk jayegi
 //          SPEED slider = 0% -> 1.8V (threshold), 100% -> THROTTLE_MAX (3.4V),
 //                       cycle chalte waqt live badalta hai
 // Safety : page ka status-poll 1s band -> throttle 0 | throttle ramp | boot par STBY LOW
@@ -45,6 +46,8 @@ const float THROTTLE_MAX   = 3.4;   // controller ka max throttle voltage
 const float CALL_VOLTAGE   = 1.8;   // CALL CYCLE dabane par ye voltage (cycle chalne ki threshold)
 const float RAMP_V_PER_SEC = 1.5;   // throttle kitni tezi se badhe
 const unsigned long DEADMAN_MS = 1000;
+const unsigned long HOLD_TIMEOUT_MS = 400;   // HOLD button ka signal itni der na aaye to throttle 0
+const float HOLD_RAMP_V_PER_SEC = 6.0;       // HOLD dabane par throttle jaldi 1.8V tak pahunche
 
 const int PWM_RES  = 10;
 const int PWM_FREQ = 20000;
@@ -55,6 +58,8 @@ const IPAddress apIP(192, 168, 4, 1);
 
 bool  systemOn = false;
 bool  calling  = false;  // CALL CYCLE chalu hai?
+bool  holding  = false;  // HOLD button dabaa hua hai?
+unsigned long lastHold = 0;
 int   speedPct = 0;      // speed slider: 0% = CALL_VOLTAGE (1.8V), 100% = THROTTLE_MAX
 float current  = 0.0;    // abhi actual output voltage
 unsigned long lastBeat = 0, lastTick = 0;
@@ -69,7 +74,7 @@ void writeVoltage(float v) {
 
 // cycle chal rahi ho to: 1.8V (speed 0%) se THROTTLE_MAX (speed 100%) ke beech
 float targetVolt() {
-  if (!calling) return 0.0;
+  if (!calling) return holding ? CALL_VOLTAGE : 0.0;
   return CALL_VOLTAGE + speedPct / 100.0 * (THROTTLE_MAX - CALL_VOLTAGE);
 }
 
@@ -101,6 +106,9 @@ input[type=range]{width:100%;height:36px;accent-color:var(--b)}
 .lab{display:flex;justify-content:space-between;font-size:13px;color:var(--mut);margin:4px 0}
 .lab b{color:var(--txt);font-size:15px}
 .card+.card{margin-top:14px}
+#hold{width:100%;margin-top:12px;padding:22px;font-size:18px;background:#6e40c9;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#hold.down{background:var(--g);transform:scale(.98)}
+.hint{color:var(--mut);font-size:12px;margin-top:6px}
 #warn{display:none;background:#5a1d1d;color:#ffb4b4;text-align:center;border-radius:10px;padding:8px;font-size:13px;margin-bottom:12px}
 </style></head><body><div class="app">
 <h1>Bicycle Control</h1><div class="sub">WiFi: bicycle control</div>
@@ -110,6 +118,8 @@ input[type=range]{width:100%;height:36px;accent-color:var(--b)}
 <div class="gauge" id="g"><div><b id="v">0.0</b><span>volt</span></div></div>
 <div class="row"><button id="start" onclick="api('/start')">START</button><button id="stop" onclick="api('/stop')">STOP</button></div>
 <button id="call" onclick="callCycle()">CALL CYCLE</button>
+<button id="hold" disabled onpointerdown="holdOn(event)" onpointerup="holdOff()" onpointercancel="holdOff()" onpointerleave="holdOff()" oncontextmenu="return false">HOLD TO RUN</button>
+<div class="hint">Dabaye rakho = threshold par chalegi, chhodte hi ruk jayegi</div>
 </div>
 <div class="card">
 <div class="lab"><span>SPEED CONTROL</span><b id="sp">0% (1.80V)</b></div>
@@ -118,13 +128,15 @@ input[type=range]{width:100%;height:36px;accent-color:var(--b)}
 </div></div>
 <script>
 var MAX=)rawliteral";
-const char PAGE_TAIL[] PROGMEM = R"rawliteral(,st={on:false,call:false,v:0,sp:0,lo:1.8},lost=0,drag=0,last=0;
+const char PAGE_TAIL[] PROGMEM = R"rawliteral(,st={on:false,call:false,hold:false,v:0,sp:0,lo:1.8},lost=0,drag=0,last=0,ht=null;
 function $(i){return document.getElementById(i)}
 function render(){
  var p=$('pill'),g=$('g'),c=$('call');
- p.className='pill'+(st.call?' run':(st.on?' ready':''));
- p.textContent=st.call?'CYCLE RUNNING':(st.on?'READY':'OFF');
- g.className='gauge'+(st.call?' run':'');
+ var run=st.call||st.hold;
+ p.className='pill'+(run?' run':(st.on?' ready':''));
+ p.textContent=st.call?'CYCLE RUNNING':(st.hold?'HOLD RUNNING':(st.on?'READY':'OFF'));
+ g.className='gauge'+(run?' run':'');
+ $('hold').disabled=!st.on||st.call;
  g.style.setProperty('--p',Math.min(100,st.v/MAX*100));
  $('v').textContent=st.v.toFixed(1);
  c.disabled=!st.on;
@@ -140,6 +152,9 @@ function render(){
 }
 function api(u){fetch(u).then(function(r){return r.json()}).then(function(s){st=s;lost=0;render()}).catch(function(){lost++;render()})}
 function setSpeed(x){var n=Date.now();if(n-last>80){last=n;api('/speed?p='+x)}}
+function holdOn(e){e.preventDefault();if(!st.on||st.call||ht)return;api('/hold?on=1');ht=setInterval(function(){api('/hold?on=1')},120);$('hold').classList.add('down')}
+function holdOff(){if(!ht)return;clearInterval(ht);ht=null;$('hold').classList.remove('down');api('/hold?on=0')}
+window.addEventListener('blur',holdOff);document.addEventListener('visibilitychange',holdOff);
 function callCycle(){api('/call?on='+(st.call?0:1))}
 setInterval(function(){api('/status')},300);api('/status');
 </script></body></html>)rawliteral";
@@ -147,6 +162,7 @@ setInterval(function(){api('/status')},300);api('/status');
 void sendStatus() {
   String j = String("{\"on\":") + (systemOn ? "true" : "false") +
              ",\"call\":" + (calling ? "true" : "false") +
+             ",\"hold\":" + (holding ? "true" : "false") +
              ",\"v\":" + String(current, 2) +
              ",\"sp\":" + String(speedPct) +
              ",\"lo\":" + String(CALL_VOLTAGE, 2) + "}";
@@ -170,6 +186,7 @@ void handleStart() {
 void handleStop() {
   systemOn = false;
   calling = false;
+  holding = false;
   speedPct = 0;
   writeVoltage(0);
   digitalWrite(PIN_STBY, LOW);
@@ -180,6 +197,20 @@ void handleCall() {
   if (systemOn && server.hasArg("on")) {
     calling = server.arg("on") == "1";
     if (!calling) speedPct = 0;
+    lastBeat = millis();
+  }
+  sendStatus();
+}
+
+void handleHold() {
+  if (systemOn && server.hasArg("on")) {
+    if (server.arg("on") == "1") {
+      holding = true;
+      lastHold = millis();
+    } else if (holding) {
+      holding = false;
+      if (!calling) writeVoltage(0);   // button chhodte hi turant ruk jao
+    }
     lastBeat = millis();
   }
   sendStatus();
@@ -225,6 +256,7 @@ void setup() {
   server.on("/stop", handleStop);
   server.on("/call", handleCall);
   server.on("/speed", handleSpeed);
+  server.on("/hold", handleHold);
   server.on("/status", handleStatus);
   server.onNotFound(handleNotFound);
   server.begin();
@@ -240,10 +272,14 @@ void loop() {
   lastTick = now;
 
   if (systemOn) {
-    if (now - lastBeat > DEADMAN_MS) { calling = false; speedPct = 0; }   // phone/WiFi gaya -> throttle 0
+    if (now - lastBeat > DEADMAN_MS) { calling = false; holding = false; speedPct = 0; }   // phone/WiFi gaya -> throttle 0
+    if (holding && now - lastHold > HOLD_TIMEOUT_MS) {   // button ka signal band -> turant ruk jao
+      holding = false;
+      if (!calling) writeVoltage(0);
+    }
 
     float target = targetVolt();
-    float step = RAMP_V_PER_SEC * dt;
+    float step = ((holding && !calling) ? HOLD_RAMP_V_PER_SEC : RAMP_V_PER_SEC) * dt;
     if (target > current)      writeVoltage(min(current + step, target));
     else if (target < current) writeVoltage(max(current - 4 * step, target));  // utarna tez
   }

@@ -20,6 +20,12 @@ PAGE KE BUTTONS
   CALL CYCLE : dabate hi throttle 1.8V (cycle chalne ki threshold,
                code me CALL_VOLTAGE) par chala deta hai. Dobara dabane par
                "STOP CYCLE" hokar cycle ruk jati hai. START ke baad hi chalta hai.
+  HOLD TO RUN : push-button jaisa. Jab tak dabaye rakho tab tak throttle 1.8V
+               (threshold) par rehta hai, chhodte hi turant 0 ho jata hai.
+               Cycle utni der hi chalegi jitni der button dabaya, aage nahi
+               bhagegi (slider se bhi tez nahi hota). Page button dabe rehne
+               par har 120ms signal bhejta hai; 400ms signal na aaye (ungli
+               phisli, WiFi gaya) to board khud ruk jata hai.
   SPEED slider (niche) : speed control centre. 0% = 1.8V (threshold, cycle
                yahin se chalna shuru), 100% = 3.4V (max, THROTTLE_MAX).
                Cycle chalte waqt slider se speed live badalti hai. CALL CYCLE
