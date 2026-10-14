@@ -46,8 +46,8 @@ const float THROTTLE_MAX   = 3.4;   // controller ka max throttle voltage
 const float CALL_VOLTAGE   = 1.8;   // CALL CYCLE dabane par ye voltage (cycle chalne ki threshold)
 const float RAMP_V_PER_SEC = 1.5;   // throttle kitni tezi se badhe
 const unsigned long DEADMAN_MS = 1000;
-const unsigned long HOLD_TIMEOUT_MS = 400;   // HOLD button ka signal itni der na aaye to throttle 0
-const float HOLD_RAMP_V_PER_SEC = 6.0;       // HOLD dabane par throttle jaldi 1.8V tak pahunche
+const unsigned long HOLD_TIMEOUT_MS = 500;   // HOLD button ka signal itni der na aaye to throttle 0
+const float HOLD_RAMP_V_PER_SEC = 20.0;       // HOLD dabane par throttle jaldi 1.8V tak pahunche
 
 const int PWM_RES  = 10;
 const int PWM_FREQ = 20000;
@@ -107,7 +107,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--b)}
 .lab b{color:var(--txt);font-size:15px}
 .card+.card{margin-top:14px}
 #hold{width:100%;margin-top:12px;padding:22px;font-size:18px;background:#6e40c9;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
-#hold.down{background:var(--g);transform:scale(.98)}
+#hold.down{background:var(--g)}
 .hint{color:var(--mut);font-size:12px;margin-top:6px}
 #warn{display:none;background:#5a1d1d;color:#ffb4b4;text-align:center;border-radius:10px;padding:8px;font-size:13px;margin-bottom:12px}
 </style></head><body><div class="app">
@@ -118,7 +118,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--b)}
 <div class="gauge" id="g"><div><b id="v">0.0</b><span>volt</span></div></div>
 <div class="row"><button id="start" onclick="api('/start')">START</button><button id="stop" onclick="api('/stop')">STOP</button></div>
 <button id="call" onclick="callCycle()">CALL CYCLE</button>
-<button id="hold" disabled onpointerdown="holdOn(event)" onpointerup="holdOff()" onpointercancel="holdOff()" onpointerleave="holdOff()" oncontextmenu="return false">HOLD TO RUN</button>
+<button id="hold" disabled onpointerdown="holdOn(event)" onpointerup="holdOff()" onpointercancel="holdOff()" onlostpointercapture="holdOff()" oncontextmenu="return false">HOLD TO RUN</button>
 <div class="hint">Dabaye rakho = threshold par chalegi, chhodte hi ruk jayegi</div>
 </div>
 <div class="card">
@@ -152,11 +152,12 @@ function render(){
 }
 function api(u){fetch(u).then(function(r){return r.json()}).then(function(s){st=s;lost=0;render()}).catch(function(){lost++;render()})}
 function setSpeed(x){var n=Date.now();if(n-last>80){last=n;api('/speed?p='+x)}}
-function holdOn(e){e.preventDefault();if(!st.on||st.call||ht)return;api('/hold?on=1');ht=setInterval(function(){api('/hold?on=1')},120);$('hold').classList.add('down')}
-function holdOff(){if(!ht)return;clearInterval(ht);ht=null;$('hold').classList.remove('down');api('/hold?on=0')}
+function holdOn(e){e.preventDefault();if(!st.on||st.call||ht)return;try{e.target.setPointerCapture(e.pointerId)}catch(x){}ht=1;$('hold').classList.add('down');holdTick()}
+function holdTick(){if(!ht)return;fetch('/hold?on=1').then(function(r){return r.json()}).then(function(s){st=s;lost=0;render()}).catch(function(){lost++}).then(function(){if(ht)ht=setTimeout(holdTick,100)})}
+function holdOff(){if(!ht)return;clearTimeout(ht);ht=null;$('hold').classList.remove('down');api('/hold?on=0')}
 window.addEventListener('blur',holdOff);document.addEventListener('visibilitychange',holdOff);
 function callCycle(){api('/call?on='+(st.call?0:1))}
-setInterval(function(){api('/status')},300);api('/status');
+setInterval(function(){if(!ht)api('/status')},300);api('/status');
 </script></body></html>)rawliteral";
 
 void sendStatus() {
@@ -207,6 +208,7 @@ void handleHold() {
     if (server.arg("on") == "1") {
       holding = true;
       lastHold = millis();
+      if (!calling) writeVoltage(CALL_VOLTAGE);   // dabate hi seedha 1.8V
     } else if (holding) {
       holding = false;
       if (!calling) writeVoltage(0);   // button chhodte hi turant ruk jao
